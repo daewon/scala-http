@@ -1,7 +1,7 @@
 /**
  * la-scala http server
  * source from http://doc.akka.io/docs/akka/2.1.0/scala/io.html
-*/
+ */
 
 /*
  * This software is licensed under the Apache 2 license, quoted below.
@@ -63,7 +63,7 @@ object HttpIteratees {
       body <- readBody(headers)
     } yield Request(meth, path, query, httpver, headers, body)
 	}
-
+	
 	def ascii(bytes: ByteString): String = bytes.decodeString("US-ASCII").trim
 	
 	def readRequestLine = {
@@ -74,25 +74,17 @@ object HttpIteratees {
 			httpver <- IO takeUntil CRLF
 		} yield (ascii(meth), uri, ascii(httpver))
 	}
-
-	def readRequestURI = IO peek 1 flatMap {
-		case PATH => {
-			for {
-				path <- readPath
-				query <- readQuery
-			} yield (path, query)
-		}
-
-		case _ => {
-			sys.error("Not Implemented")
+			
+	def readRequestURI = {
+		IO peek 1 flatMap {
+			case PATH =>
+				for {
+					path <- readPath
+					query <- readQuery
+				} yield (path, query)
+					case _ => sys.error("Not Implemented")
 		}
 	}
-
-	def readBody(headers: List[Header]) =
-		if (headers.exists(header => header.name == "Content-Length" || header.name == "Transfer-Encoding"))
-			IO.takeAll map (Some(_))
-		else
-			IO Done None
 	
 	def readPath = {
 		def step(segments: List[String]): IO.Iteratee[List[String]] = IO peek 1 flatMap {
@@ -104,12 +96,14 @@ object HttpIteratees {
 		}
 		step(Nil)
 	}
-
-	def readQuery: IO.Iteratee[Option[String]] = IO peek 1 flatMap {
-		case QUERY => IO drop 1 flatMap (_ => readUriPart(querychar) map (Some(_)))
-		case _     => IO Done None
+		
+	def readQuery: IO.Iteratee[Option[String]] = {
+		IO peek 1 flatMap {
+			case QUERY => IO drop 1 flatMap (_ => readUriPart(querychar) map (Some(_)))
+			case _     => IO Done None
+		}
 	}
-
+	
 	val alpha = Set.empty ++ ('a' to 'z') ++ ('A' to 'Z') map (_.toByte)
 	val digit = Set.empty ++ ('0' to '9') map (_.toByte)
 	val hexdigit = digit ++ (Set.empty ++ ('a' to 'f') ++ ('A' to 'F') map (_.toByte))
@@ -117,17 +111,21 @@ object HttpIteratees {
 	val pathchar = alpha ++ digit ++ subdelim ++ (Set(':', '@') map (_.toByte))
 	val querychar = pathchar ++ (Set('/', '?') map (_.toByte))
 	
-	def readUriPart(allowed: Set[Byte]): IO.Iteratee[String] = for {
-		str <- IO takeWhile allowed map ascii
-		pchar <- IO peek 1 map (_ == PERCENT)
-		all <- if (pchar) readPChar flatMap (ch => readUriPart(allowed) map (str + ch + _)) else IO Done str
-	} yield all
-	
-	def readPChar = IO take 3 map {
-		case Seq('%', rest @ _*) if rest forall hexdigit =>
-			java.lang.Integer.parseInt(rest map (_.toChar) mkString, 16).toChar
+	def readUriPart(allowed: Set[Byte]): IO.Iteratee[String] = {
+		for {
+			str <- IO takeWhile allowed map ascii
+			pchar <- IO peek 1 map (_ == PERCENT)
+			all <- if (pchar) readPChar flatMap (ch => readUriPart(allowed) map (str + ch + _)) else IO Done str
+		} yield all
 	}
-
+	
+	def readPChar = { 
+		IO take 3 map {
+			case Seq('%', rest @ _*) if rest forall hexdigit =>
+				java.lang.Integer.parseInt(rest map (_.toChar) mkString, 16).toChar
+		}
+	}
+	
 	def readHeaders = {
 		def step(found: List[Header]): IO.Iteratee[List[Header]] = {
 			IO peek 2 flatMap {
@@ -139,22 +137,23 @@ object HttpIteratees {
 	}
 	
 	def readHeader = {
-		for {
+		for { 
 			name <- IO takeUntil COLON
 			value <- IO takeUntil CRLF flatMap readMultiLineValue
 		} yield Header(ascii(name), ascii(value))
 	}
 	
-	def readMultiLineValue(initial: ByteString): IO.Iteratee[ByteString] = {
-		IO peek 1 flatMap {
-			case SP => IO takeUntil CRLF flatMap (bytes => readMultiLineValue(initial ++ bytes))
-		}
+	def readMultiLineValue(initial: ByteString): IO.Iteratee[ByteString] = IO peek 1 flatMap {
+		case SP => IO takeUntil CRLF flatMap (bytes => readMultiLineValue(initial ++ bytes))
+		case _  => IO Done initial
+	}
+	
+	def readBody(headers: List[Header]) = {
+		if (headers.exists(header => header.name == "Content-Length" || header.name == "Transfer-Encoding")) IO.takeAll map (Some(_))
+		else IO Done None	
 	}
 }
 
-/**
-* ok 응답
-*/ 
 object OKResponse {
   import HttpConstants.CRLF
 	
@@ -176,38 +175,35 @@ object OKResponse {
     date ++= ByteString(new java.util.Date().toString) ++= CRLF ++=
     server ++= CRLF ++=
     contentLength ++= ByteString(rsp.body.length.toString) ++= CRLF ++=
-    connection ++= (if (rsp.keepAlive) keepAlive else close) ++= CRLF ++=
-    CRLF ++= rsp.body result
+    connection ++= (if (rsp.keepAlive) keepAlive else close) ++= CRLF ++= CRLF ++= rsp.body result
   }
 }
 
 case class OKResponse(body: ByteString, keepAlive: Boolean)
 
 /**
-* http server companion object 
-*/
+ * http server companion object 
+ */
 object HttpServer {
-	import HttpIteratees._
+  import HttpIteratees._
 	
-	def processRequest(socket: IO.SocketHandle): IO.Iteratee[Unit] = {
-		IO repeat {
-			for {
-				request <- readRequest
-			} yield {
-				val rsp = request match {
-					case Request("GET", "ping" :: Nil, _, _, headers, _) => {
-						OKResponse(ByteString("<p>pong</p>"), request.headers.exists { 
-							case Header(n, v) => n.toLowerCase == "connection" && v.toLowerCase == "keep-alive" })
+  def processRequest(socket: IO.SocketHandle): IO.Iteratee[Unit] = {
+    IO repeat {
+      for {
+        request <- readRequest
+      } yield {
+        val rsp = request match {
+          case Request("GET", "ping" :: Nil, _, _, headers, _) => {
+						OKResponse(ByteString("<p>pong</p>"), request.headers.exists { case Header(n, v) => n.toLowerCase == "connection" && v.toLowerCase == "keep-alive" })
 					}
-					case req => {
-						OKResponse(ByteString("<p>" + req.toString + "</p>"), request.headers.exists { 
-							case Header(n, v) => n.toLowerCase == "connection" && v.toLowerCase == "keep-alive" })
+          case req => {
+						OKResponse(ByteString("<p>" + req.toString + "</p>"), request.headers.exists { case Header(n, v) => n.toLowerCase == "connection" && v.toLowerCase == "keep-alive" })
 					}
-				}		
-				socket write OKResponse.bytes(rsp).compact
-				if (!rsp.keepAlive) socket.close()
-			}
-		}
+        }
+        socket write OKResponse.bytes(rsp).compact
+        if (!rsp.keepAlive) socket.close()
+      }
+    }	
 	}
 }
 
@@ -215,35 +211,34 @@ object HttpServer {
  * http server main
  */
 class HttpServer(port: Int) extends Actor {
-	val state = IO.IterateeRef.Map.async[IO.Handle]()(context.dispatcher)
+  val state = IO.IterateeRef.Map.async[IO.Handle]()(context.dispatcher)
 	
-	override def preStart {
-		IOManager(context.system) listen new InetSocketAddress(port)
-	}
+  override def preStart {
+    IOManager(context.system) listen new InetSocketAddress(port)
+  }
 	
-	def receive = {
-		case IO.NewClient(server) => {
+  def receive = {
+    case IO.NewClient(server) => {
 			val socket = server.accept()
 			state(socket) flatMap (_ => HttpServer.processRequest(socket))
 		}
-		
-		case IO.Read(socket, bytes) => {
+
+    case IO.Read(socket, bytes) => {
 			state(socket)(IO Chunk bytes)
 		}
 		
-		case IO.Closed(socket, cause) => {
+    case IO.Closed(socket, cause) => {
 			state(socket)(IO EOF)
 			state -= socket
 		}
-	}
+  }
 }
-
 
 /**
  * Main
  */ 
 object Main extends App {
-	val port = Option(System.getenv("PORT")) map (_.toInt) getOrElse 8080
-	val system = ActorSystem()
-	val server = system.actorOf(Props(new HttpServer(port)))
+  val port = Option(System.getenv("PORT")) map (_.toInt) getOrElse 8080
+  val system = ActorSystem()
+  val server = system.actorOf(Props(new HttpServer(port)))
 }
