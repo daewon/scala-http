@@ -1,7 +1,26 @@
 /**
- * la-scala static http server
- * example from http://doc.akka.io/docs/akka/2.0/scala/io.html
+ * la-scala http server
+ * source from http://doc.akka.io/docs/akka/2.1.0/scala/io.html
+*/
+
+/*
+ * This software is licensed under the Apache 2 license, quoted below.
+ *  
+ *  Copyright 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ *  
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
+ *  
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *  
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License. 
  */
+
 package laScala.http
 
 import akka.actor._
@@ -57,12 +76,16 @@ object HttpIteratees {
 	}
 
 	def readRequestURI = IO peek 1 flatMap {
-		case PATH =>
+		case PATH => {
 			for {
 				path <- readPath
 				query <- readQuery
 			} yield (path, query)
-				case _ => sys.error("Not Implemented")
+		}
+
+		case _ => {
+			sys.error("Not Implemented")
+		}
 	}
 
 	def readBody(headers: List[Header]) =
@@ -102,7 +125,7 @@ object HttpIteratees {
 	
 	def readPChar = IO take 3 map {
 		case Seq('%', rest @ _*) if rest forall hexdigit =>
-    java.lang.Integer.parseInt(rest map (_.toChar) mkString, 16).toChar
+			java.lang.Integer.parseInt(rest map (_.toChar) mkString, 16).toChar
 	}
 
 	def readHeaders = {
@@ -130,8 +153,8 @@ object HttpIteratees {
 }
 
 /**
- * ok 응답
- */ 
+* ok 응답
+*/ 
 object OKResponse {
   import HttpConstants.CRLF
 	
@@ -161,11 +184,11 @@ object OKResponse {
 case class OKResponse(body: ByteString, keepAlive: Boolean)
 
 /**
- * http server companion object 
- */
+* http server companion object 
+*/
 object HttpServer {
 	import HttpIteratees._
-		
+	
 	def processRequest(socket: IO.SocketHandle): IO.Iteratee[Unit] = {
 		IO repeat {
 			for {
@@ -193,17 +216,17 @@ object HttpServer {
  */
 class HttpServer(port: Int) extends Actor {
 	val state = IO.IterateeRef.Map.async[IO.Handle]()(context.dispatcher)
-		
+	
 	override def preStart {
 		IOManager(context.system) listen new InetSocketAddress(port)
 	}
-		
+	
 	def receive = {
 		case IO.NewClient(server) => {
 			val socket = server.accept()
 			state(socket) flatMap (_ => HttpServer.processRequest(socket))
 		}
-			
+		
 		case IO.Read(socket, bytes) => {
 			state(socket)(IO Chunk bytes)
 		}
